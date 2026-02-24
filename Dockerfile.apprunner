@@ -1,0 +1,38 @@
+# App Runner 用: nginx + php-fpm を1コンテナで実行（supervisord で管理）
+FROM php:8.2-fpm-alpine
+
+RUN apk add --no-cache \
+    nginx \
+    supervisor \
+    git \
+    unzip \
+    curl \
+    libzip-dev \
+    icu-dev \
+    oniguruma-dev
+
+RUN docker-php-ext-install pdo pdo_mysql opcache intl zip bcmath
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www
+
+COPY . .
+RUN composer install --no-dev --optimize-autoloader --no-interaction
+
+# パーミッション設定
+RUN chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
+
+# nginx 設定（Alpine は http.d を使用）
+RUN rm -f /etc/nginx/http.d/default.conf
+COPY docker/nginx/apprunner.conf /etc/nginx/http.d/default.conf
+
+# supervisord 設定
+COPY docker/supervisord.conf /etc/supervisord.conf
+
+# ログディレクトリ
+RUN mkdir -p /run/nginx /var/log/nginx /var/log/supervisor
+
+EXPOSE 80
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

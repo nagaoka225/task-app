@@ -1,0 +1,69 @@
+# main ブランチへのマージ時に AWS App Runner へデプロイ
+name: Deploy to AWS App Runner
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: task-app
+  APP_RUNNER_SERVICE: task-app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          docker build -f Dockerfile.apprunner -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Deploy to App Runner
+        uses: awslabs/amazon-app-runner-deploy@v1
+        env:
+          APP_ENV: production
+          AUTH_CODE: ${{ secrets.AUTH_CODE }}
+          APP_KEY: ${{ secrets.APP_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLIC_KEY: ${{ secrets.SUPABASE_PUBLIC_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          service: ${{ env.APP_RUNNER_SERVICE }}
+          image: ${{ steps.build.outputs.image }}
+          access-role-arn: ${{ secrets.APP_RUNNER_ACCESS_ROLE_ARN }}
+          region: ${{ env.AWS_REGION }}
+          port: '80'
+          cpu: '1'
+          memory: '2'
+          copy-env-vars: |
+            APP_ENV
+            AUTH_CODE
+            APP_KEY
+            SUPABASE_URL
+            SUPABASE_PUBLIC_KEY
+            OPENAI_API_KEY
+          wait-for-service-stability-seconds: 600
